@@ -1,0 +1,164 @@
+<html>
+    <head>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js" integrity="sha512-a+SUDuwNzXDvz4XrIcXHuCf089/iJAoN4lmrXJg18XnduKK6YlDHNRalv4yd1N40OKI80tFidF+rqTFKGPoWFQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+        <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
+    </head>
+    <body>
+        <script>
+
+            const { requestRoll, roll, } = () => {
+
+                function getInviteHash() {
+                    const url = window.location.href;
+                    if (url.indexOf("#") === -1) {
+                        return null;
+                    } else {
+                        const other_pid = url.split("#")[1];
+                    }
+                }
+
+                function rollDice(value) {
+                    return (Math.floor(Math.random() * value) + 1).toString();
+                }
+
+                function getSecret() {
+                    const lookup = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+                    const secret = [];
+                    for (let i = 0; i < 30; i++) {
+                        secret.push(
+                            lookup[Math.floor(Math.random() * lookup.length)]
+                        );
+                    }
+                    return secret.join("");
+                }
+
+                function encrypt(number, secret) {
+                    return CryptoJS.AES.encrypt(number, secret);
+                }
+
+                function decrypt(message, secret) {
+                    return CryptoJS.AES.decrypt(message, secret);
+                }
+
+                const other_pid = getInviteHash();
+                let isHost = other_pid !== null;
+                let conn_list = [];
+
+                // Only dm can access dm values
+                const dm = {};
+
+                function requestRoll(value) {
+                    if (isHost) {
+
+                        dm.value = value;
+
+                        // DM Calculate offset value
+                        dm.offset = rollDice(value);
+
+                        // DM generate secret
+                        dm.secret = getSecret();
+
+                        // DM encrypt offset value
+                        dm.encrypted_offset = encrypt(dm.offset, dm.secret);
+
+                        for (let conn of conn_list) {
+                            conn.send({
+                                type: "roll_request",
+                                value,
+                                encrypted_offset: dm.encrypted_offset
+                            });
+                        }
+                    }
+                }
+
+                // Only player can access player values
+                const player = {};
+
+                function roll(value) {
+                    if (!isHost) {
+
+                        player.value = value;
+
+                        // Player rolls dice
+                        player.offset = rollDice(value);
+
+                        for (let conn of conn_list) {
+                            conn.send({
+                                type: "player_roll",
+                                offset: player.offset
+                            });
+                        }
+                    }
+                }
+
+                function getData(data) {
+                    if (data.type === "roll_request") {
+                        // Player stores copy of dm encyptyed offset
+                        player.encrypted_dm_offset = data.encrypted_offset;
+
+                    } else if (data.type === "player_roll") {
+                        // DM stores copy of player roll
+                        dm.player_offset = data.offset;
+
+                        for (let conn of conn_list) {
+                            conn.send({
+                                type: "secret",
+                                player_offset: data.offset,
+                                secret: dm.secret
+                            });
+                        }
+
+                    } else if (data.type === "secret") {
+                        // Player stores dm secret
+                        player.secret = data.secret;
+
+                        // Other players store player_offset
+                        if (!("offset" in player)) {
+                            player.offset = data.player_offset;
+                        }
+
+                        // Player calculated roll
+                        const offset = decrypt(player.encrypted_dm_offset, player.secret);
+                        player.roll = ((offset + player.offset) % player.value) + 1;
+
+                        for (let conn of conn_list) {
+                            conn.send({
+                                type: "roll_value",
+                                roll: player.roll
+                            });
+                        }
+
+                    } else if (data.type === "roll_value") {
+                        if (isHost) {
+                            // DM calculated roll
+                            dm.roll = ((dm.offset + dm.player_offset) % dm.value) + 1;
+                        }
+
+                    }
+                }
+
+                const peer = new Peer();
+                if (other_pid === null) {
+                    peer.on('open', function(id) {
+                        window.location.href = `${window.location.href}#${id}`;
+                        console.log(`Invite URL: ${window.location.href}`);
+                    });
+                    peer.on('connection', function(conn) {
+                        conn.on('data', (data) => getData(data));
+                        conn_list.push(conn);
+                    });
+
+                } else {
+                    var conn = peer.connect(other_pid);
+                    conn.on('open', function() {
+                        conn.on('data', (data) => getData(data));
+                    });
+                }
+
+                console.log(
+                    `dm: ${dm.roll}\nplayer: ${player.roll}`
+                );
+            }
+        </script>
+    </body>
+</html>

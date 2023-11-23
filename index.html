@@ -6,16 +6,28 @@
     <body>
         <script>
 
-            const { requestRoll, roll, } = () => {
-
-                function getInviteHash() {
-                    const url = window.location.href;
-                    if (url.indexOf("#") === -1) {
-                        return null;
-                    } else {
-                        const other_pid = url.split("#")[1];
-                    }
+            function getInviteHash() {
+                const url = window.location.href;
+                if (url.indexOf("#") === -1) {
+                    return null;
+                } else {
+                    return url.split("#")[1];
                 }
+            }
+
+            const other_pid = getInviteHash();
+            let isHost = other_pid === null;
+            let conn_list = [];
+
+            if (isHost) {
+                console.log("You are the DM!");
+            } else {
+                console.log("You are a Player!");
+            }
+
+            const { requestRoll, roll } = (() => {
+
+                const SIZE = 1000;
 
                 function rollDice(value) {
                     return (Math.floor(Math.random() * value) + 1).toString();
@@ -40,20 +52,16 @@
                     return CryptoJS.AES.decrypt(message, secret);
                 }
 
-                const other_pid = getInviteHash();
-                let isHost = other_pid !== null;
-                let conn_list = [];
-
                 // Only dm can access dm values
                 const dm = {};
 
                 function requestRoll(value) {
                     if (isHost) {
-
+                        dm.votes = [];
                         dm.value = value;
 
                         // DM Calculate offset value
-                        dm.offset = rollDice(value);
+                        dm.offset = rollDice(SIZE);
 
                         // DM generate secret
                         dm.secret = getSecret();
@@ -74,13 +82,10 @@
                 // Only player can access player values
                 const player = {};
 
-                function roll(value) {
+                function roll() {
                     if (!isHost) {
-
-                        player.value = value;
-
-                        // Player rolls dice
-                        player.offset = rollDice(value);
+                        // Player gets offset
+                        player.offset = rollDice(SIZE);
 
                         for (let conn of conn_list) {
                             conn.send({
@@ -92,9 +97,12 @@
                 }
 
                 function getData(data) {
+                    console.log(data);
                     if (data.type === "roll_request") {
                         // Player stores copy of dm encyptyed offset
+                        player.value = data.value;
                         player.encrypted_dm_offset = data.encrypted_offset;
+                        console.log(`DM: Roll Request for D${data.value}`);
 
                     } else if (data.type === "player_roll") {
                         // DM stores copy of player roll
@@ -129,36 +137,89 @@
                         }
 
                     } else if (data.type === "roll_value") {
-                        if (isHost) {
-                            // DM calculated roll
-                            dm.roll = ((dm.offset + dm.player_offset) % dm.value) + 1;
+                        
+                        // DM calculated roll
+                        dm.roll = ((dm.offset + dm.player_offset) % dm.value) + 1;
+                        dm.votes.push(data.roll);
+
+                        let flag = false;
+                        if (dm.votes.length === conn_list.length) {
+                            for (let vote of dm.votes) {
+                                if (vote !== dm.roll) {
+                                    console.log("WARNING: Roll Disagreement!");
+                                    flag = true;
+                                    break;
+                                }
+                            }
+
+                            if (!flag) {
+                                console.log(`Roll Value: ${dm.roll}`);
+                                for (let conn of conn_list) {
+                                    conn.send({
+                                        type: "roll_result",
+                                        roll: dm.roll
+                                    });
+                                }
+
+                            } else {
+                                for (let conn of conn_list) {
+                                    conn.send({
+                                        type: "roll_error"
+                                    });
+                                }
+                            }
+                            clear();
                         }
 
+                    } else if (data.type === "roll_result") {
+                        console.log(`Roll Value: ${data.roll}`);
+                        clear();
+
+                    } else if (data.type === "roll_error") {
+                        console.log("WARNING: Roll Disagreement!");
+                        clear();
                     }
                 }
 
-                const peer = new Peer();
-                if (other_pid === null) {
-                    peer.on('open', function(id) {
-                        window.location.href = `${window.location.href}#${id}`;
-                        console.log(`Invite URL: ${window.location.href}`);
-                    });
-                    peer.on('connection', function(conn) {
-                        conn.on('data', (data) => getData(data));
-                        conn_list.push(conn);
-                    });
+                function clearObject(obj) {
+                    const keys = obj.keys();
+                    for (let key of keys) {
+                        delete obj[key];
+                    }
+                }
 
-                } else {
+                function clear() {
+                    clearObject(dm);
+                    clearObject(player);
+                }
+
+                return {
+                    requestRoll,
+                    roll
+                };
+            })();
+
+            const peer = new Peer();
+            if (other_pid === null) {
+                peer.on('open', function(id) {
+                    const invite = `${window.location.href}#${id}`;
+                    //window.location.href = `${window.location.href}#${id}`;
+                    console.log(`Invite URL: ${invite}`);
+                });
+                peer.on('connection', function(conn) {
+                    conn.on('data', (data) => getData(data));
+                    conn_list.push(conn);
+                });
+
+            } else {
+                peer.on('open', function(id) {
                     var conn = peer.connect(other_pid);
                     conn.on('open', function() {
                         conn.on('data', (data) => getData(data));
+                        conn_list.push(conn);
                     });
-                }
-
-                console.log(
-                    `dm: ${dm.roll}\nplayer: ${player.roll}`
-                );
-            }
+                });
+            }            
         </script>
     </body>
 </html>

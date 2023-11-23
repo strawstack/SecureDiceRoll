@@ -6,6 +6,45 @@
     <body>
         <script>
 
+            const JsonFormatter = {
+                stringify: function(cipherParams) {
+                    // create json object with ciphertext
+                    var jsonObj = { ct: cipherParams.ciphertext.toString(CryptoJS.enc.Base64) };
+
+                    // optionally add iv or salt
+                    if (cipherParams.iv) {
+                    jsonObj.iv = cipherParams.iv.toString();
+                    }
+
+                    if (cipherParams.salt) {
+                    jsonObj.s = cipherParams.salt.toString();
+                    }
+
+                    // stringify json object
+                    return JSON.stringify(jsonObj);
+                },
+                parse: function(jsonStr) {
+                    // parse json string
+                    var jsonObj = JSON.parse(jsonStr);
+
+                    // extract ciphertext from json object, and create cipher params object
+                    var cipherParams = CryptoJS.lib.CipherParams.create({
+                        ciphertext: CryptoJS.enc.Base64.parse(jsonObj.ct)
+                    });
+
+                    // optionally extract iv or salt
+                    if (jsonObj.iv) {
+                        cipherParams.iv = CryptoJS.enc.Hex.parse(jsonObj.iv);
+                    }
+
+                    if (jsonObj.s) {
+                        cipherParams.salt = CryptoJS.enc.Hex.parse(jsonObj.s);
+                    }
+                    
+                    return cipherParams;
+                }
+            };
+
             function getInviteHash() {
                 const url = window.location.href;
                 if (url.indexOf("#") === -1) {
@@ -25,7 +64,7 @@
                 console.log("You are a Player!");
             }
 
-            const { requestRoll, roll } = (() => {
+            const { requestRoll, roll, getData } = (() => {
 
                 const SIZE = 1000;
 
@@ -45,11 +84,15 @@
                 }
 
                 function encrypt(number, secret) {
-                    return CryptoJS.AES.encrypt(number, secret);
+                    return CryptoJS.AES.encrypt(number, secret, {
+                        format: JsonFormatter
+                    }).toString();
                 }
 
                 function decrypt(message, secret) {
-                    return CryptoJS.AES.decrypt(message, secret);
+                    return CryptoJS.AES.decrypt(message, secret, {
+                        format: JsonFormatter
+                    }).toString(CryptoJS.enc.Utf8);
                 }
 
                 // Only dm can access dm values
@@ -68,6 +111,8 @@
 
                         // DM encrypt offset value
                         dm.encrypted_offset = encrypt(dm.offset, dm.secret);
+
+                        console.log(dm.encrypted_offset);
 
                         for (let conn of conn_list) {
                             conn.send({
@@ -97,7 +142,6 @@
                 }
 
                 function getData(data) {
-                    console.log(data);
                     if (data.type === "roll_request") {
                         // Player stores copy of dm encyptyed offset
                         player.value = data.value;
@@ -182,7 +226,7 @@
                 }
 
                 function clearObject(obj) {
-                    const keys = obj.keys();
+                    const keys = Object.keys(obj);
                     for (let key of keys) {
                         delete obj[key];
                     }
@@ -195,7 +239,8 @@
 
                 return {
                     requestRoll,
-                    roll
+                    roll,
+                    getData
                 };
             })();
 

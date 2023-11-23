@@ -112,8 +112,6 @@
                         // DM encrypt offset value
                         dm.encrypted_offset = encrypt(dm.offset, dm.secret);
 
-                        console.log(dm.encrypted_offset);
-
                         for (let conn of conn_list) {
                             conn.send({
                                 type: "roll_request",
